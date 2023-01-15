@@ -47,6 +47,8 @@
 #include <unistd.h>
 #include <vector>
 
+#define HERE() printf("I'm in %s @ %d, errno: %d\n", __func__, __LINE__, errno)
+
 namespace {
 
 // The fraction of physical memory that should be mapped for testing.
@@ -61,7 +63,9 @@ uint32_t number_of_reads = 1000*1024;
 // Obtain the size of the physical memory of the system.
 uint32_t GetPhysicalMemorySize() {
   struct sysinfo info;
+  HERE();
   sysinfo( &info );
+  HERE();
   printf("[!] Total RAM: %d, Unit: %d\n", (size_t)info.totalram, (size_t)info.mem_unit);
   return (size_t)info.totalram * (size_t)info.mem_unit;
 }
@@ -69,19 +73,26 @@ uint32_t GetPhysicalMemorySize() {
 uint32_t GetPageFrameNumber(int pagemap, uint8_t* virtual_address) {
   // Read the entry in the pagemap.
   uint32_t value;
+  printf("pagemap: %d, value: %d, virtual_address: %x, arg: %x\n", pagemap, value, virtual_address, (reinterpret_cast<uintptr_t>(virtual_address) / 0x1000));
   int got = pread(pagemap, &value, 4,
                   (reinterpret_cast<uintptr_t>(virtual_address) / 0x1000) * 4);
+  printf("\nGot: %d, errno: %d\n", got, errno);
   assert(got == 4);
   uint32_t page_frame_number = value & ((1ULL << 54)-1);
   return page_frame_number;
 }
 
 void SetupMapping(uint32_t* mapping_size, void** mapping) {
+  HERE();
   *mapping_size = GetPhysicalMemorySize() / fraction_of_physical_memory;
 
+  HERE();
+  printf("errno: %d\n", errno);
   *mapping = mmap(NULL, *mapping_size, PROT_READ | PROT_WRITE,
       MAP_POPULATE | MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+  HERE();
   assert(*mapping != (void*)-1);
+  printf("mapping: %x, mapping_size: %d, errno: %d\n", *mapping, *mapping_size, errno);
 
   // Initialize the mapping so that the pages are non-empty.
   printf("[!] Initializing large memory mapping ...");
@@ -118,11 +129,11 @@ uint32_t HammerAddressesStandard(
       asm volatile(
         "lw t0, (%0)\n\t" : : "r" (cache_pointer++) : "memory");
     }
-    printf("Attack memory\n");
-    asm volatile(
-        "lw t0, (%0)\n\t;"
-        "lw t0, (%1)\n\t;"
-        : : "r" (first_pointer), "r" (second_pointer) : "memory");
+    // printf("Attack memory\n");
+    // asm volatile(
+    //     "lw t0, (%0)\n\t;"
+    //     "lw t0, (%1)\n\t;"
+    //     : : "r" (first_pointer), "r" (second_pointer) : "memory");
   }
   return sum;
 }
@@ -135,7 +146,7 @@ typedef uint32_t(HammerFunction)(
 // A comprehensive test that attempts to hammer adjacent rows for a given 
 // assumed row size (and assumptions of sequential physical addresses for 
 // various rows.
-uint32_t HammerAllReachablePages(uint32_t presumed_row_size,
+uint32_t HammerAllReachablePages(uint32_t presumed_row_size, 
     void* memory_mapping, uint32_t memory_mapping_size, HammerFunction* hammer,
     uint32_t number_of_reads) {
   // This vector will be filled with all the pages we can get access to for a
@@ -148,6 +159,7 @@ uint32_t HammerAllReachablePages(uint32_t presumed_row_size,
   assert(pagemap >= 0);
 
   printf("[!] Identifying rows for accessible pages ...\n ");
+  printf("memory_mapping: %x\n", memory_mapping);
   for (uint32_t offset = 0; offset < memory_mapping_size; offset += 0x1000) {
     uint8_t* virtual_address = static_cast<uint8_t*>(memory_mapping) + offset;
     uint32_t page_frame_number = GetPageFrameNumber(pagemap, virtual_address);
@@ -225,8 +237,10 @@ uint32_t HammerAllReachablePages(uint32_t presumed_row_size,
 void HammerAllReachableRows(HammerFunction* hammer, uint32_t number_of_reads) {
   uint32_t mapping_size;
   void* mapping;
+  HERE();
   SetupMapping(&mapping_size, &mapping);
 
+  HERE();
   HammerAllReachablePages(1024*256, mapping, mapping_size,
                           hammer, number_of_reads);
 }
@@ -243,7 +257,9 @@ void HammeredEnough(int sig) {
 
 int main(int argc, char** argv) {
   // Turn off stdout buffering when it is a pipe.
+  HERE();
   setvbuf(stdout, NULL, _IONBF, 0);
+  HERE();
 
   int opt;
   while ((opt = getopt(argc, argv, "t:p:")) != -1) {
@@ -261,9 +277,12 @@ int main(int argc, char** argv) {
     }
   }
 
+  HERE();
   signal(SIGALRM, HammeredEnough);
 
   printf("[!] Starting the testing process...\n");
+  HERE();
   alarm(number_of_seconds_to_hammer);
+  HERE();
   HammerAllReachableRows(&HammerAddressesStandard, number_of_reads);
 }
