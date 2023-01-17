@@ -26,9 +26,11 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <errno.h>
 
+#define HERE() printf("I'm in %s @ %d, errno: %d\n", __func__, __LINE__, errno)
 
-const size_t mem_size = 1 << 30;
+const size_t mem_size = 1 << 10;
 const int toggles = 540000;
 
 char *g_mem;
@@ -62,18 +64,32 @@ class Timer {
 
 static void toggle(int iterations, int addr_count) {
   Timer timer;
+  // HERE();
   for (int j = 0; j < iterations; j++) {
+    // HERE();
     uint32_t *addrs[addr_count];
     for (int a = 0; a < addr_count; a++)
       addrs[a] = (uint32_t *) pick_addr();
+    // HERE();
 
     uint32_t sum = 0;
     for (int i = 0; i < toggles; i++) {
       for (int a = 0; a < addr_count; a++)
         sum += *addrs[a] + 1;
-      for (int a = 0; a < addr_count; a++)
-        asm volatile("clflush (%0)" : : "r" (addrs[a]) : "memory");
+      for (int j = 0x10000; j < 0x10000 + 4096; j++) {
+        ((volatile unsigned int *) addrs + j);
+      }
+      asm volatile(
+        ".word(0x100F)\n"
+        "nop\n"
+        "nop\n"
+        "nop\n"
+        "nop\n"
+        "nop\n"
+      );
+      asm volatile(".word(0x500F)\n");
     }
+    // HERE();
 
     // Sanity check.  We don't expect this to fail, because reading
     // these rows refreshes them.
@@ -81,22 +97,23 @@ static void toggle(int iterations, int addr_count) {
       printf("error: sum=%x\n", sum);
       exit(1);
     }
+    // HERE();
   }
 
   // Print statistics derived from the time and number of accesses.
-  double time_taken = timer.get_diff();
-  printf("  Took %.1f ms per address set\n",
-         time_taken / iterations * 1e3);
-  printf("  Took %g sec in total for %i address sets\n",
-         time_taken, iterations);
-  int memory_accesses = iterations * addr_count * toggles;
-  printf("  Took %.3f nanosec per memory access (for %i memory accesses)\n",
-         time_taken / memory_accesses * 1e9,
-         memory_accesses);
-  int refresh_period_ms = 64;
-  printf("  This gives %i accesses per address per %i ms refresh period\n",
-         (int) (refresh_period_ms * 1e-3 * iterations * toggles / time_taken),
-         refresh_period_ms);
+  // double time_taken = timer.get_diff();
+  // printf("  Took %.1f ms per address set\n",
+  //        time_taken / iterations * 1e3);
+  // printf("  Took %g sec in total for %i address sets\n",
+  //        time_taken, iterations);
+  // int memory_accesses = iterations * addr_count * toggles;
+  // printf("  Took %.3f nanosec per memory access (for %i memory accesses)\n",
+  //        time_taken / memory_accesses * 1e9,
+  //        memory_accesses);
+  // int refresh_period_ms = 64;
+  // printf("  This gives %i accesses per address per %i ms refresh period\n",
+  //        (int) (refresh_period_ms * 1e-3 * iterations * toggles / time_taken),
+  //        refresh_period_ms);
 }
 
 void main_prog() {
@@ -106,25 +123,33 @@ void main_prog() {
 
   printf("clear\n");
   memset(g_mem, 0xff, mem_size);
+  printf("memory set\n");
 
   Timer t;
   int iter = 0;
   for (;;) {
-    printf("Iteration %i (after %.2fs)\n", iter++, t.get_diff());
+    printf("Iteration %i\n", iter++);
+    // printf("Iteration %i (after %.2fs)\n", iter++, t.get_diff());
+    // HERE();
     toggle(10, 8);
+    // HERE();
 
     Timer check_timer;
-    uint64_t *end = (uint64_t *) (g_mem + mem_size);
-    uint64_t *ptr;
+    uint32_t *end = (uint32_t *) (g_mem + mem_size);
+    uint32_t *ptr;
     int errors = 0;
-    for (ptr = (uint64_t *) g_mem; ptr < end; ptr++) {
-      uint64_t got = *ptr;
-      if (got != ~(uint64_t) 0) {
-        printf("error at %p: got 0x%" PRIx64 "\n", ptr, got);
+    // HERE();
+    for (ptr = (uint32_t *) g_mem; ptr < end; ptr++) {
+      uint32_t got = *ptr;
+      // HERE();
+      if (got != ~(uint32_t) 0) {
+        // HERE();
+        printf("error at %p: got 0x%x" PRIx64 "\n", ptr, got);
         errors++;
       }
     }
-    printf("  Checking for bit flips took %f sec\n", check_timer.get_diff());
+    printf("  Checked for bit flips\n");
+    // printf("  Checking for bit flips took %f sec\n", check_timer.get_diff());
     if (errors)
       exit(1);
   }
